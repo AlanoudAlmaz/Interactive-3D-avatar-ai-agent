@@ -43,7 +43,7 @@ documentation.md_bak
 output.mp3
 *.mp3
 
-# Large binary assets (avatar model — users must provide their own)
-static/avatar_fixed.glb
-static/*.glb
+# Large binary assets (avatar model)
+# static/avatar_fixed.glb
+# static/*.glb
 
