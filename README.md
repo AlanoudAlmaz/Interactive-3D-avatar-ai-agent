@@ -1,6 +1,6 @@
 <div align="center">
 
-#  Connekt AI — 3D Voice Agent
+#  Riverborn AI — 3D Voice Agent
 
 **A production-ready, real-time 3D AI voice agent with high-fidelity lip-sync powered by Azure Cognitive Services, OpenAI GPT-4o, and Deepgram.**
 
@@ -15,7 +15,7 @@
 
 ##  What Is This?
 
-**Connekt AI** is a full-stack, open-source voice agent that lets you have a real-time, natural conversation with a photorealistic 3D avatar directly in your browser. You speak → the avatar hears you → thinks using GPT-4o → responds with a human-like voice → and its **mouth moves in perfect sync with what it says**.
+**Riverborn AI** is a full-stack, open-source voice agent that lets you have a real-time, natural conversation with a photorealistic 3D avatar directly in your browser. You speak → the avatar hears you → thinks using GPT-4o → responds with a human-like voice → and its **mouth moves in perfect sync with what it says**.
 
 No push-to-talk buttons. No command keywords. Just talk.
 
@@ -135,8 +135,8 @@ Before you begin, make sure you have:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/connekt-voice-agent.git
-cd connekt-voice-agent
+git clone https://github.com/YOUR_USERNAME/riverborn-ai-agent.git
+cd riverborn-ai-agent
 ```
 
 ---

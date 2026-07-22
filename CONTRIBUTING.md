@@ -1,6 +1,6 @@
-#  Contributing to Connekt AI — 3D Voice Agent
+#  Contributing to Riverborn AI — 3D Voice Agent
 
-Thank you for your interest in contributing to **Connekt AI**! We welcome and appreciate contributions from the open-source community to make this real-time 3D voice agent even better.
+Thank you for your interest in contributing to **Riverborn AI**! We welcome and appreciate contributions from the open-source community to make this real-time 3D voice agent even better.
 
 Please take a moment to review this document before submitting your first Pull Request or opening an issue.
 
@@ -41,12 +41,12 @@ To set up a local development environment, please follow these steps:
 1. **Fork the repository** on GitHub.
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/connekt-voice-agent.git
-   cd connekt-voice-agent
+   git clone https://github.com/YOUR_USERNAME/riverborn-ai-agent.git
+   cd riverborn-ai-agent
    ```
 3. **Set up upstream remote** to keep your fork in sync:
    ```bash
-   git remote add upstream https://github.com/connekt-studio/voice-agent.git
+   git remote add upstream https://github.com/riverborn-ai/riverborn-ai-agent.git
    ```
 4. **Create a virtual environment** and install dependencies:
    ```bash
