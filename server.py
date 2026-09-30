@@ -1,165 +1,212 @@
+"""Zayed — ADCMC Digital Employee: FastAPI application."""
+
+import logging
+import mimetypes
 import os
-import base64
-import requests
-import json
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+import re
+from typing import Annotated
+
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
-from elevenlabs import ElevenLabs
-from dotenv import load_dotenv
-import azure.cognitiveservices.speech as speechsdk
+from pydantic import BaseModel, Field
 
-load_dotenv()
+from zayed.assistant import Assistant
+from zayed.config import BASE_DIR, settings
+from zayed.documents import KIND_BY_EXTENSION, UnsupportedDocument
+from zayed.files import FileStore
+from zayed.knowledge import KnowledgeBase
+from zayed.speech import SpeechService
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("zayed")
 
-# Client setup
-openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_client = OpenAI(api_key=openai_api_key)
+_SESSION = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
-eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
-eleven_client = ElevenLabs(api_key=eleven_api_key) if eleven_api_key and len(eleven_api_key) > 10 else None
+knowledge = KnowledgeBase(settings.knowledge_dir).load()
+files = FileStore(settings.upload_dir, settings.max_upload_mb * 1024 * 1024).load()
+assistant = Assistant(settings, knowledge, files)
+speech = SpeechService(settings)
 
-# History for conversation
-conversation_history = [
-    {"role": "system", "content": "You are a helpful AI voice assistant. Respond naturally and very concisely in English only. The user is talking to you via voice."}
-]
+app = FastAPI(title="Zayed — ADCMC Digital Employee", docs_url=None, redoc_url=None)
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
-def generate_azure_tts_with_visemes(text):
-    """Generate audio and visemes (blendshapes) using Azure Speech Service"""
-    try:
-        speech_config = speechsdk.SpeechConfig(
-            subscription=os.getenv("AZURE_SPEECH_KEY"), 
-            region=os.getenv("AZURE_SPEECH_REGION")
-        )
-        # Force facial expression metadata
-        speech_config.set_property(speechsdk.PropertyId.SpeechServiceResponse_RequestFacialExpression, "true")
-        
-        speech_config.set_speech_synthesis_output_format(
-            speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3
-        )
-        
-        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
-        
-        visemes = []
-        
-        def viseme_cb(evt):
-            if evt.animation:
-                anim_data = json.loads(evt.animation)
-                visemes.append({
-                    "time": evt.audio_offset / 10000,
-                    "blendshapes": anim_data["BlendShapes"]
-                })
-                
-        synthesizer.viseme_received.connect(viseme_cb)
-        
-        ssml = f"""
-        <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'>
-            <voice name='en-US-AvaMultilingualNeural'>
-                <mstts:viseme type='FacialExpression'/>
-                {text}
-            </voice>
-        </speak>
-        """
-        
-        result = synthesizer.speak_ssml_async(ssml).get()
-        
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            return base64.b64encode(result.audio_data).decode("utf-8"), visemes
-        else:
-            print(f"Azure TTS Error: {result.reason}")
-            return "", []
-    except Exception as e:
-        print(f"Azure Exception: {e}")
-        return "", []
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()")
+    return response
+
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str = Field(min_length=1, max_length=4000)
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
+    language: str = "en"
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=3000)
+    language: str = "en"
+
+
+def _session(session_id: str) -> str:
+    if not _SESSION.match(session_id or ""):
+        raise HTTPException(400, "Invalid session id.")
+    return session_id
+
 
 @app.get("/", response_class=HTMLResponse)
-async def get_index():
+async def index():
+    return (BASE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/api/config")
+async def config():
+    return {
+        "assistant": {"name_en": "Zayed", "name_ar": "زايد", "organization": "ADCMC"},
+        "capabilities": {
+            "azure_speech": speech.enabled,
+            "llm": assistant.client is not None,
+            "llm_provider": assistant.provider,
+        },
+        "speech": {
+            "region": settings.azure_speech_region if speech.enabled else None,
+            "voices": {"en": settings.voice_en, "ar": settings.voice_ar},
+            "recognition_languages": ["en-US", "ar-AE"],
+        },
+        "avatar": {"url": settings.avatar_url, "body": settings.avatar_body},
+        "knowledge": {"documents": len(knowledge.documents), "rejected": len(knowledge.rejected)},
+        "upload": {"max_mb": settings.max_upload_mb, "extensions": sorted(KIND_BY_EXTENSION)},
+    }
+
+
+@app.get("/api/speech/token")
+async def speech_token():
+    if not speech.enabled:
+        raise HTTPException(503, "Azure Speech is not configured.")
     try:
-        with open("static/index.html", "r") as f:
-            return f.read()
-    except Exception as e:
-        return f"Error loading index.html: {e}"
+        token = await run_in_threadpool(speech.token)
+    except Exception as exc:
+        logger.exception("Azure token request failed")
+        raise HTTPException(502, "Could not obtain an Azure Speech token.") from exc
+    return {"token": token, "region": settings.azure_speech_region}
 
-@app.post("/process-voice")
-async def process_voice(audio: UploadFile = File(...)):
+
+@app.post("/api/speech/synthesize")
+async def synthesize(request: SpeechRequest):
+    if not speech.enabled:
+        raise HTTPException(503, "Azure Speech is not configured.")
+    language = "ar" if request.language == "ar" else "en"
     try:
-        audio_bytes = await audio.read()
-        if not audio_bytes:
-            return JSONResponse({"error": "Empty audio data"}, status_code=400)
-        
-        # Deepgram transcription
-        deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
-        url = "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&language=en-US"
-        headers = {
-            "Authorization": f"Token {deepgram_api_key}",
-            "Content-Type": "audio/wav"
-        }
-        dg_response = requests.post(url, headers=headers, data=audio_bytes)
-        
-        if dg_response.status_code != 200:
-            return JSONResponse({"error": "Speech transcription failed"}, status_code=500)
-            
-        dg_data = dg_response.json()
-        alternatives = dg_data.get('results', {}).get('channels', [{}])[0].get('alternatives', [{}])
-        user_text = alternatives[0].get('transcript', "") if alternatives else ""
-        
-        if not user_text.strip():
-            return JSONResponse({"error": "No speech detected"})
+        return await run_in_threadpool(speech.synthesize, request.text, language)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
-        # OpenAI reasoning
-        conversation_history.append({"role": "user", "content": user_text})
-        response = openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=conversation_history,
-            max_tokens=200
-        )
-        ai_text = response.choices[0].message.content
-        conversation_history.append({"role": "assistant", "content": ai_text})
 
-        # Azure TTS with Visemes
-        audio_base64 = ""
-        visemes = []
-        
-        if os.getenv("AZURE_SPEECH_KEY"):
-            audio_base64, visemes = generate_azure_tts_with_visemes(ai_text)
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    session_id = _session(request.session_id)
+    language = "ar" if request.language == "ar" else "en"
+    result = await run_in_threadpool(assistant.answer, session_id, request.message, request.file_ids, language)
+    return result.public()
 
-        # Fallbacks
-        if not audio_base64:
-            audio_base64 = generate_openai_tts(ai_text)
 
-        if not audio_base64:
-            return JSONResponse({"error": "Text-to-speech failed"}, status_code=500)
+@app.get("/api/knowledge")
+async def knowledge_index():
+    return {"documents": [d.public() for d in knowledge.documents.values()]}
 
-        return {
-            "user_text": user_text,
-            "ai_text": ai_text,
-            "audio_base64": audio_base64,
-            "visemes": visemes
-        }
 
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+@app.get("/api/knowledge/{doc_id}")
+async def knowledge_document(doc_id: str):
+    doc = knowledge.documents.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found.")
+    return {
+        **doc.public(),
+        "origin": "knowledge",
+        "preview": doc.extracted.preview,
+        "raw_url": f"/api/knowledge/{doc_id}/raw",
+        "asset_base": f"/api/knowledge/{doc_id}/assets/",
+    }
 
-def generate_openai_tts(text):
+
+@app.get("/api/knowledge/{doc_id}/raw")
+async def knowledge_raw(doc_id: str):
+    doc = knowledge.documents.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found.")
+    return FileResponse(doc.path, media_type=mimetypes.guess_type(doc.path.name)[0], content_disposition_type="inline")
+
+
+@app.get("/api/knowledge/{doc_id}/assets/{number}")
+async def knowledge_asset(doc_id: str, number: int):
+    doc = knowledge.documents.get(doc_id)
+    if not doc or not 0 <= number < len(doc.extracted.assets):
+        raise HTTPException(404, "Asset not found.")
+    content_type, blob = doc.extracted.assets[number]
+    return Response(blob, media_type=content_type)
+
+
+@app.post("/api/files")
+async def upload(file: Annotated[UploadFile, File()], session_id: Annotated[str, Form()]):
+    session_id = _session(session_id)
+    data = await file.read(files.max_bytes + 1)
     try:
-        response = requests.post(
-            "https://api.openai.com/v1/audio/speech",
-            headers={
-                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-                "Content-Type": "application/json"
-            },
-            json={"model": "tts-1", "input": text, "voice": "alloy"}
-        )
-        if response.status_code == 200:
-            return base64.b64encode(response.content).decode("utf-8")
-    except: pass
-    return ""
+        stored = await run_in_threadpool(files.save, session_id, file.filename or "upload", data)
+    except (UnsupportedDocument, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Could not process upload %s", file.filename)
+        raise HTTPException(422, "The file could not be read. It may be corrupted or password-protected.") from exc
+    return stored.public()
+
+
+@app.get("/api/files/{file_id}")
+async def file_detail(file_id: str):
+    stored = files.get(file_id)
+    if not stored:
+        raise HTTPException(404, "File not found.")
+    return stored.public()
+
+
+@app.get("/api/files/{file_id}/raw")
+async def file_raw(file_id: str):
+    stored = files.get(file_id)
+    if not stored:
+        raise HTTPException(404, "File not found.")
+    return FileResponse(stored.path, media_type=stored.mime, content_disposition_type="inline")
+
+
+@app.get("/api/files/{file_id}/assets/{number}")
+async def file_asset(file_id: str, number: int):
+    found = files.asset(file_id, number)
+    if not found:
+        raise HTTPException(404, "Asset not found.")
+    path, content_type = found
+    return FileResponse(path, media_type=content_type)
+
+
+@app.delete("/api/files/{file_id}")
+async def file_delete(file_id: str):
+    if not files.delete(file_id):
+        raise HTTPException(404, "File not found.")
+    return {"deleted": file_id}
+
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

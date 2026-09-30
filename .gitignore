@@ -47,3 +47,6 @@ output.mp3
 # static/avatar_fixed.glb
 # static/*.glb
 
+
+# Session uploads
+uploads/
