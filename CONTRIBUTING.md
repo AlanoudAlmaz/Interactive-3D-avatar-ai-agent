@@ -55,7 +55,7 @@ To set up a local development environment, please follow these steps:
    pip install -r requirements.txt
    ```
 5. **Configure your environment**:
-   Copy `.env.example` to `.env` and fill in your keys. Make sure you place a compatible `.glb` avatar model in `static/avatar_fixed.glb`.
+   Copy `.env.example` to `.env` and fill in your keys. The default avatar is the talking portrait in `static/avatar/`; set `ZAYED_AVATAR_URL` to a compatible `.glb` to use a TalkingHead 3D model instead.
 
 ---
 

@@ -1,0 +1,33 @@
+{
+  "description": "Approved sources for Zayed. Only entries with complete approval metadata and status 'approved' are indexed.",
+  "documents": [
+    {
+      "id": "zayed-user-guide",
+      "title": "Zayed Digital Employee — User Guide",
+      "title_ar": "دليل استخدام الموظف الرقمي زايد (بالإنجليزية)",
+      "file": "approved/zayed-user-guide.md",
+      "language": "en",
+      "source": "Digital Employee platform documentation",
+      "owner": "Digital Employee platform team",
+      "approved_by": "Platform owner",
+      "approved_on": "2026-09-30",
+      "version": "1.0",
+      "classification": "Internal",
+      "status": "approved"
+    },
+    {
+      "id": "zayed-user-guide-ar",
+      "title": "Zayed Digital Employee — User Guide (Arabic)",
+      "title_ar": "دليل استخدام الموظف الرقمي زايد",
+      "file": "approved/zayed-user-guide.ar.md",
+      "language": "ar",
+      "source": "Digital Employee platform documentation",
+      "owner": "Digital Employee platform team",
+      "approved_by": "Platform owner",
+      "approved_on": "2026-09-30",
+      "version": "1.0",
+      "classification": "Internal",
+      "status": "approved"
+    }
+  ]
+}
