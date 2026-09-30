@@ -1,6 +1,7 @@
 import pytest
 from conftest import make_docx
 
+from zayed import files as files_module
 from zayed.files import FileStore
 
 
@@ -33,3 +34,20 @@ def test_rejects_empty_oversized_and_unsupported(store: FileStore):
 def test_get_rejects_malformed_ids(store: FileStore):
     assert store.get("../etc/passwd") is None
     assert store.get("") is None
+
+
+def test_expired_and_incomplete_uploads_are_discarded(store: FileStore, monkeypatch):
+    stored = store.save("session-abc", "a.txt", b"Budget review is on Thursday.")
+    assert store.get_owned(stored.id, "session-abc") is not None
+    assert store.get_owned(stored.id, "session-xyz") is None
+    monkeypatch.setattr(files_module.time, "time", lambda: stored.uploaded_at + files_module.RETENTION_SECONDS + 1)
+    assert store.search("budget", [stored.id]) == []
+    assert store.get(stored.id) is None
+    assert not (store.root / stored.id).exists()
+    monkeypatch.undo()
+
+    broken = store.save("session-abc", "b.txt", b"Some text.")
+    next((store.root / broken.id).glob("original*")).unlink()
+    reloaded = FileStore(store.root, store.max_bytes).load()
+    assert reloaded.get(broken.id) is None
+    assert not (store.root / broken.id).exists()

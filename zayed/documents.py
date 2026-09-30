@@ -4,6 +4,7 @@ import csv
 import html
 import io
 import json
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,9 @@ KIND_BY_EXTENSION = {
 
 MAX_SHEET_ROWS = 500
 MAX_SHEET_COLS = 40
+MAX_INDEX_ROWS = 5000
+MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
+MAX_ARCHIVE_ENTRIES = 5000
 MAX_SLIDE_IMAGES = 3
 
 
@@ -183,7 +187,7 @@ def _sheet_payload(name: str, rows: list[list[str]]) -> tuple[dict, Section]:
     clipped = [r[:MAX_SHEET_COLS] for r in rows[:MAX_SHEET_ROWS]]
     width = max((len(r) for r in clipped), default=0)
     clipped = [r + [""] * (width - len(r)) for r in clipped]
-    text = "\n".join(" | ".join(r) for r in clipped if any(r))
+    text = "\n".join(" | ".join(r) for r in rows[:MAX_INDEX_ROWS] if any(r))
     return {"name": name, "rows": clipped, "truncated": truncated}, Section(f"Sheet: {name}", text)
 
 
@@ -200,7 +204,7 @@ def _extract_sheet(data: bytes, filename: str) -> ExtractedDocument:
             rows = []
             for row in worksheet.iter_rows(values_only=True):
                 rows.append([_cell(v) for v in row])
-                if len(rows) > MAX_SHEET_ROWS:
+                if len(rows) >= MAX_INDEX_ROWS:
                     break
             while rows and not any(rows[-1]):
                 rows.pop()
@@ -211,9 +215,21 @@ def _extract_sheet(data: bytes, filename: str) -> ExtractedDocument:
     return ExtractedDocument("sheet", sections, {"kind": "sheets", "sheets": sheets})
 
 
+def _check_archive(data: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+    except zipfile.BadZipFile as exc:
+        raise UnsupportedDocument("The file is not a valid Office document.") from exc
+    if len(entries) > MAX_ARCHIVE_ENTRIES or sum(e.file_size for e in entries) > MAX_UNCOMPRESSED_BYTES:
+        raise UnsupportedDocument("The file expands beyond the allowed size.")
+
+
 def extract(data: bytes, filename: str) -> ExtractedDocument:
     """Extract searchable text sections and a viewer payload from a file."""
     kind = kind_for(filename)
+    if kind in ("docx", "pptx") or (kind == "sheet" and not filename.lower().endswith(".csv")):
+        _check_archive(data)
     if kind == "pdf":
         return _extract_pdf(data)
     if kind == "docx":

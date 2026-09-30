@@ -40,3 +40,15 @@ def test_duplicate_ids_rejected(knowledge_dir):
 def test_missing_manifest_loads_empty(tmp_path):
     kb = KnowledgeBase(tmp_path).load()
     assert kb.documents == {} and kb.search("anything") == []
+
+
+def test_corrupt_approved_document_is_rejected(knowledge_dir):
+    import json
+
+    (knowledge_dir / "approved" / "broken.pdf").write_bytes(b"%PDF-1.7 truncated")
+    manifest = json.loads((knowledge_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["documents"].append({**manifest["documents"][0], "id": "broken", "file": "approved/broken.pdf"})
+    (knowledge_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    kb = KnowledgeBase(knowledge_dir).load()
+    assert "broken" not in kb.documents and "leave" in kb.documents
+    assert any(r["id"] == "broken" for r in kb.rejected)

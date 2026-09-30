@@ -6,7 +6,7 @@ import os
 import re
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +48,11 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     file_ids: list[str] = Field(default_factory=list, max_length=10)
     language: str = "en"
+    language_detected: bool = False
+
+
+class SessionRequest(BaseModel):
+    session_id: str
 
 
 class SpeechRequest(BaseModel):
@@ -55,10 +60,21 @@ class SpeechRequest(BaseModel):
     language: str = "en"
 
 
-def _session(session_id: str) -> str:
+def _session(session_id: str | None) -> str:
     if not _SESSION.match(session_id or ""):
         raise HTTPException(400, "Invalid session id.")
     return session_id
+
+
+SessionHeader = Annotated[str | None, Header(alias="X-Zayed-Session")]
+SessionQuery = Annotated[str | None, Query(alias="session_id")]
+
+
+def _owned_file(file_id: str, header: str | None, query: str | None):
+    stored = files.get_owned(file_id, _session(header or query))
+    if not stored:
+        raise HTTPException(404, "File not found.")
+    return stored
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -120,8 +136,16 @@ async def synthesize(request: SpeechRequest):
 async def chat(request: ChatRequest):
     session_id = _session(request.session_id)
     language = "ar" if request.language == "ar" else "en"
-    result = await run_in_threadpool(assistant.answer, session_id, request.message, request.file_ids, language)
+    result = await run_in_threadpool(
+        assistant.answer, session_id, request.message, request.file_ids, language, request.language_detected
+    )
     return result.public()
+
+
+@app.post("/api/session/reset")
+async def reset_session(request: SessionRequest):
+    assistant.forget(_session(request.session_id))
+    return {"reset": True}
 
 
 @app.get("/api/knowledge")
@@ -175,24 +199,19 @@ async def upload(file: Annotated[UploadFile, File()], session_id: Annotated[str,
 
 
 @app.get("/api/files/{file_id}")
-async def file_detail(file_id: str):
-    stored = files.get(file_id)
-    if not stored:
-        raise HTTPException(404, "File not found.")
-    return stored.public()
+async def file_detail(file_id: str, header: SessionHeader = None, query: SessionQuery = None):
+    return _owned_file(file_id, header, query).public()
 
 
 @app.get("/api/files/{file_id}/raw")
-async def file_raw(file_id: str):
-    stored = files.get(file_id)
-    if not stored:
-        raise HTTPException(404, "File not found.")
+async def file_raw(file_id: str, header: SessionHeader = None, query: SessionQuery = None):
+    stored = _owned_file(file_id, header, query)
     return FileResponse(stored.path, media_type=stored.mime, content_disposition_type="inline")
 
 
 @app.get("/api/files/{file_id}/assets/{number}")
-async def file_asset(file_id: str, number: int):
-    found = files.asset(file_id, number)
+async def file_asset(file_id: str, number: int, header: SessionHeader = None, query: SessionQuery = None):
+    found = files.asset(file_id, _session(header or query), number)
     if not found:
         raise HTTPException(404, "Asset not found.")
     path, content_type = found
@@ -200,9 +219,8 @@ async def file_asset(file_id: str, number: int):
 
 
 @app.delete("/api/files/{file_id}")
-async def file_delete(file_id: str):
-    if not files.delete(file_id):
-        raise HTTPException(404, "File not found.")
+async def file_delete(file_id: str, header: SessionHeader = None, query: SessionQuery = None):
+    files.delete(_owned_file(file_id, header, query).id)
     return {"deleted": file_id}
 
 

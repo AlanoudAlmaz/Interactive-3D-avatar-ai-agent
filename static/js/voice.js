@@ -34,7 +34,7 @@ export class VoiceInput {
     return this.token;
   }
 
-  /** Listen for one utterance. Resolves {text, language} or null when nothing was recognised. */
+  /** Listen for one utterance. Resolves {text, language, detected} or null when nothing was recognised. */
   async listen({ lang, onPartial }) {
     this.cancel();
     if (this.azure && window.SpeechSDK) {
@@ -69,7 +69,7 @@ export class VoiceInput {
         (result) => {
           if (result.reason !== sdk.ResultReason.RecognizedSpeech || !result.text) return finish(null);
           const detected = sdk.AutoDetectSourceLanguageResult.fromResult(result).language || languages[0];
-          finish({ text: result.text, language: detected.startsWith("ar") ? "ar" : "en" });
+          finish({ text: result.text, language: detected.startsWith("ar") ? "ar" : "en", detected: true });
         },
         (error) => finish(null, new Error(String(error))),
       );

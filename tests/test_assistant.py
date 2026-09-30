@@ -49,3 +49,14 @@ def test_uploads_are_scoped_to_their_session(assistant: Assistant):
 def test_greeting_is_conversational(assistant: Assistant):
     answer = assistant.answer("session-abc", "hello", [])
     assert answer.mode == "conversational" and "Zayed" in answer.text
+
+
+def test_detected_voice_language_is_preserved(assistant: Assistant):
+    assert assistant.answer("session-abc", "ADCMC", [], "ar", language_detected=True).language == "ar"
+    assert assistant.answer("session-abc", "ADCMC", [], "ar").language == "en"
+
+
+def test_forget_clears_history(assistant: Assistant):
+    assistant.answer("session-abc", "hello", [])
+    assistant.forget("session-abc")
+    assert "session-abc" not in assistant.history

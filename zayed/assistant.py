@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import re
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
 from openai import AzureOpenAI, OpenAI
@@ -21,6 +21,7 @@ logger = logging.getLogger("zayed.assistant")
 LLM_MIN_SCORE, LLM_MIN_COVERAGE = 0.8, 0.3
 EXTRACTIVE_MIN_SCORE, EXTRACTIVE_MIN_COVERAGE = 1.5, 0.5
 HISTORY_TURNS = 6
+MAX_SESSIONS = 2000
 
 REFUSAL = {
     "en": (
@@ -109,7 +110,7 @@ class Assistant:
         self.settings = settings
         self.knowledge = knowledge
         self.files = files
-        self.history: dict[str, deque] = {}
+        self.history: OrderedDict[str, deque] = OrderedDict()
         self.client = self._client()
 
     def _client(self):
@@ -132,9 +133,19 @@ class Assistant:
             return "azure-openai"
         return "openai" if self.settings.openai_enabled else "none"
 
-    def answer(self, session_id: str, message: str, file_ids: list[str], ui_language: str = "en") -> Answer:
+    def answer(
+        self,
+        session_id: str,
+        message: str,
+        file_ids: list[str],
+        ui_language: str = "en",
+        language_detected: bool = False,
+    ) -> Answer:
         message = message.strip()
-        language = detect_language(message) if re.search(r"[^\W\d_]", message) else ui_language
+        if language_detected or not re.search(r"[^\W\d_]", message):
+            language = ui_language
+        else:
+            language = detect_language(message)
         file_ids = [f for f in file_ids if (stored := self.files.get(f)) and stored.session_id == session_id]
 
         if _GREETING_RE.match(message):
@@ -331,8 +342,14 @@ class Assistant:
             "excerpt": "",
         }
 
+    def forget(self, session_id: str) -> None:
+        self.history.pop(session_id, None)
+
     def _remember(self, session_id: str, message: str, answer: Answer) -> Answer:
         history = self.history.setdefault(session_id, deque(maxlen=HISTORY_TURNS * 2))
+        self.history.move_to_end(session_id)
+        while len(self.history) > MAX_SESSIONS:
+            self.history.popitem(last=False)
         history.append({"role": "user", "content": message})
         history.append(
             {

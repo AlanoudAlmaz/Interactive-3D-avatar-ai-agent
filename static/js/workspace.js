@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import * as pdfjs from "pdfjs";
 import { icon, kindIcon } from "./icons.js";
+import { sessionUrl } from "./api.js";
 import { lang, t } from "./i18n.js";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
@@ -134,7 +135,7 @@ class DocWindow {
 
   async #renderPdf() {
     this.mode = "pages";
-    const pdf = await pdfjs.getDocument({ url: this.doc.raw_url, isEvalSupported: false }).promise;
+    const pdf = await pdfjs.getDocument({ url: sessionUrl(this.doc.raw_url), isEvalSupported: false }).promise;
     const ratio = Math.min(2.5, (window.devicePixelRatio || 1) * 1.6);
     const holders = [];
     for (let n = 1; n <= pdf.numPages; n++) {
@@ -187,7 +188,7 @@ class DocWindow {
     const bullets = s.body
       .map((b) => `<li class="l${Math.min(2, b.level || 0)}" dir="auto">${escapeHtml(b.text)}</li>`)
       .join("");
-    const images = s.images.map((n) => `<img src="${this.doc.asset_base}${n}" alt="" loading="lazy">`).join("");
+    const images = s.images.map((n) => `<img src="${sessionUrl(`${this.doc.asset_base}${n}`)}" alt="" loading="lazy">`).join("");
     this.canvas.innerHTML = `
       <div class="slide">
         <div class="slide-num">${t("slide")} ${this.slide + 1} / ${this.slides.length}</div>
@@ -246,7 +247,7 @@ class DocWindow {
       img.className = "img-view";
       img.alt = this.doc.title;
       img.onload = img.onerror = () => resolve();
-      img.src = this.doc.raw_url;
+      img.src = sessionUrl(this.doc.raw_url);
       this.canvas.appendChild(img);
       this.canvas.style.width = "max-content";
       this.centered = true;

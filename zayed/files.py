@@ -66,10 +66,15 @@ class FileStore:
                     self._purge(folder)
                     continue
                 self._register(meta, folder)
-            except (OSError, KeyError, json.JSONDecodeError):
+            except (OSError, KeyError, StopIteration, json.JSONDecodeError):
                 logger.warning("Discarding unreadable upload %s", folder)
                 self._purge(folder)
         return self
+
+    def purge_expired(self) -> None:
+        now = time.time()
+        for stored in [f for f in self.files.values() if now - f.uploaded_at > RETENTION_SECONDS]:
+            self.delete(stored.id)
 
     def save(self, session_id: str, filename: str, data: bytes) -> StoredFile:
         filename = Path(filename or "upload").name[:180]
@@ -78,6 +83,7 @@ class FileStore:
             raise ValueError("The file is empty.")
         if len(data) > self.max_bytes:
             raise ValueError(f"The file exceeds the {self.max_bytes // (1024 * 1024)} MB limit.")
+        self.purge_expired()
         extracted = extract(data, filename)
         file_id = uuid.uuid4().hex
         folder = self.root / file_id
@@ -124,10 +130,20 @@ class FileStore:
         return stored
 
     def get(self, file_id: str) -> StoredFile | None:
-        return self.files.get(file_id) if _ID.match(file_id or "") else None
+        stored = self.files.get(file_id) if _ID.match(file_id or "") else None
+        if stored and time.time() - stored.uploaded_at > RETENTION_SECONDS:
+            self.files.pop(stored.id, None)
+            self.index.remove_doc(stored.id)
+            self._purge(stored.path.parent)
+            return None
+        return stored
 
-    def asset(self, file_id: str, number: int) -> tuple[Path, str] | None:
+    def get_owned(self, file_id: str, session_id: str) -> StoredFile | None:
         stored = self.get(file_id)
+        return stored if stored and stored.session_id == session_id else None
+
+    def asset(self, file_id: str, session_id: str, number: int) -> tuple[Path, str] | None:
+        stored = self.get_owned(file_id, session_id)
         if not stored or not 0 <= number < len(stored.asset_types):
             return None
         return stored.path.parent / f"asset-{number}", stored.asset_types[number]
@@ -142,7 +158,7 @@ class FileStore:
         return True
 
     def search(self, query: str, file_ids: list[str], limit: int = 4) -> list[Hit]:
-        ids = {f for f in file_ids if f in self.files}
+        ids = {f for f in file_ids if self.get(f)}
         return self.index.search(query, limit, ids) if ids else []
 
     def leading_chunks(self, file_id: str, limit: int = 4):

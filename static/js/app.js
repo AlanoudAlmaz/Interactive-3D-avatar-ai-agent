@@ -134,6 +134,7 @@ function addAssistantMessage(result) {
   let badge = "";
   if (result.mode !== "conversational") {
     if (refusal) badge = `<span class="badge warn">${icon("warn", 12)}${t("notVerified")}</span>`;
+    else if (fromKnowledge && fromUpload) badge = `<span class="badge info">${icon("doc", 12)}${t("mixedSources")}</span>`;
     else if (fromKnowledge) badge = `<span class="badge ok">${icon("shield", 12)}${t("verified")}</span>`;
     else if (fromUpload) badge = `<span class="badge info">${icon("doc", 12)}${t("fromUpload")}</span>`;
   }
@@ -285,7 +286,7 @@ async function speak(text, language) {
   }
 }
 
-async function ask(text, { language } = {}) {
+async function ask(text, { language, detected = false } = {}) {
   text = text.trim();
   if (!text || app.busy) return;
   const hasWindows = workspace.windows.length > 0;
@@ -305,7 +306,7 @@ async function ask(text, { language } = {}) {
   const typing = addTyping();
   const fileIds = app.attachments.filter((f) => !f.pending).map((f) => f.id);
   try {
-    const result = await api.chat(text, fileIds, language || lang());
+    const result = await api.chat(text, fileIds, language || lang(), Boolean(language && detected));
     typing.remove();
     addAssistantMessage(result);
     setCaption(result.answer.replace(/\s*\[[SU]\d+\]/g, ""));
@@ -344,7 +345,7 @@ async function toggleListening() {
       return;
     }
     setState("ready");
-    await ask(result.text, { language: result.language });
+    await ask(result.text, { language: result.language, detected: Boolean(result.detected) });
   } catch (err) {
     setState("ready");
     setCaption("");
@@ -429,6 +430,7 @@ function bindEvents() {
     els.messages.querySelectorAll(".msg").forEach((m) => m.remove());
     els.welcome.hidden = false;
     setCaption("");
+    api.resetSession().catch(() => {});
   });
   els.langToggle.addEventListener("click", () => setLang(lang() === "ar" ? "en" : "ar"));
   els.voiceToggle.addEventListener("click", () => {

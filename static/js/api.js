@@ -8,6 +8,11 @@ function sessionId() {
 }
 
 export const SESSION_ID = sessionId();
+const SESSION_HEADERS = { "X-Zayed-Session": SESSION_ID };
+
+export function sessionUrl(url) {
+  return `${url}${url.includes("?") ? "&" : "?"}session_id=${encodeURIComponent(SESSION_ID)}`;
+}
 
 async function request(path, options = {}) {
   const response = await fetch(path, options);
@@ -31,10 +36,14 @@ export const api = {
   config: () => request("/api/config"),
   knowledge: () => request("/api/knowledge"),
   knowledgeDoc: (id) => request(`/api/knowledge/${encodeURIComponent(id)}`),
-  file: (id) => request(`/api/files/${encodeURIComponent(id)}`),
-  deleteFile: (id) => request(`/api/files/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  chat: (message, fileIds, language) =>
-    request("/api/chat", json({ session_id: SESSION_ID, message, file_ids: fileIds, language })),
+  file: (id) => request(`/api/files/${encodeURIComponent(id)}`, { headers: SESSION_HEADERS }),
+  deleteFile: (id) => request(`/api/files/${encodeURIComponent(id)}`, { method: "DELETE", headers: SESSION_HEADERS }),
+  chat: (message, fileIds, language, languageDetected = false) =>
+    request(
+      "/api/chat",
+      json({ session_id: SESSION_ID, message, file_ids: fileIds, language, language_detected: languageDetected }),
+    ),
+  resetSession: () => request("/api/session/reset", json({ session_id: SESSION_ID })),
   synthesize: (text, language) => request("/api/speech/synthesize", json({ text, language })),
   speechToken: () => request("/api/speech/token"),
   upload(file) {

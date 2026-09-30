@@ -165,6 +165,10 @@ class KnowledgeBase:
             except (OSError, UnsupportedDocument) as exc:
                 self.rejected.append({"id": entry["id"], "file": entry["file"], "reason": str(exc)})
                 continue
+            except Exception:
+                logger.exception("Knowledge document %s could not be parsed", entry["id"])
+                self.rejected.append({"id": entry["id"], "file": entry["file"], "reason": "file could not be parsed"})
+                continue
             doc = KnowledgeDocument(entry["id"], entry["title"], entry.get("title_ar", ""), path, entry, extracted)
             self.documents[doc.id] = doc
             self.index.add(chunk_document(doc.id, doc.title, extracted))

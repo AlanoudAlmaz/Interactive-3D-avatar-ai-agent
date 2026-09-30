@@ -49,3 +49,23 @@ def test_text_markdown_and_json():
 def test_image_has_no_text():
     doc = extract(b"\x89PNG\r\n\x1a\n" + b"0" * 20, "p.png")
     assert doc.kind == "image" and not doc.text.strip()
+
+
+def test_wide_sheet_columns_are_searchable():
+    header = [f"c{i}" for i in range(60)]
+    values = ["x"] * 59 + ["policy-value-in-column-60"]
+    doc = extract((",".join(header) + "\n" + ",".join(values) + "\n").encode(), "wide.csv")
+    assert doc.preview["sheets"][0]["truncated"]
+    assert len(doc.preview["sheets"][0]["rows"][0]) == 40
+    assert "policy-value-in-column-60" in doc.sections[0].text
+
+
+def test_archive_bomb_is_rejected():
+    import io
+    import zipfile
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"\0" * (201 * 1024 * 1024))
+    with pytest.raises(UnsupportedDocument):
+        extract(out.getvalue(), "bomb.docx")

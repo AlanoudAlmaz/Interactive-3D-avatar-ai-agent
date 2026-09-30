@@ -69,13 +69,28 @@ def test_upload_lifecycle(client):
     assert response.status_code == 200
     meta = response.json()
     assert meta["kind"] == "text" and meta["has_text"]
-    assert client.get(meta["raw_url"]).content == b"Budget review is on Thursday."
+    headers = {"X-Zayed-Session": SESSION}
+    assert client.get(meta["raw_url"]).status_code == 400
+    assert client.get(meta["raw_url"], headers={"X-Zayed-Session": "other-session-0002"}).status_code == 404
+    assert client.get(meta["raw_url"], params={"session_id": SESSION}).content == b"Budget review is on Thursday."
     chat = client.post(
         "/api/chat", json={"session_id": SESSION, "message": "When is the budget review?", "file_ids": [meta["id"]]}
     ).json()
     assert chat["grounded"] and chat["sources"][0]["origin"] == "upload"
-    assert client.delete(f"/api/files/{meta['id']}").status_code == 200
-    assert client.get(f"/api/files/{meta['id']}").status_code == 404
+    assert (
+        client.delete(f"/api/files/{meta['id']}", headers={"X-Zayed-Session": "other-session-0002"}).status_code == 404
+    )
+    assert client.delete(f"/api/files/{meta['id']}", headers=headers).status_code == 200
+    assert client.get(f"/api/files/{meta['id']}", headers=headers).status_code == 404
+
+
+def test_session_reset_clears_history(client):
+    import server
+
+    client.post("/api/chat", json={"session_id": SESSION, "message": "hello"})
+    assert SESSION in server.assistant.history
+    assert client.post("/api/session/reset", json={"session_id": SESSION}).status_code == 200
+    assert SESSION not in server.assistant.history
 
 
 def test_upload_rejects_unsupported(client):
