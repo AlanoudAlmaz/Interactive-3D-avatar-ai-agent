@@ -8,6 +8,28 @@ const VISEME_POSE = [
   [0.1, 0.2, 0], [0.24, 0.2, 0], [0.32, 0.15, 0], [0, 0, 0],
 ];
 const VIEW = { cx: 0.487, cy: 0.45, size: 0.86 };
+const BILABIAL = 21;
+const NOSE = 4;
+const BROWS = [70, 63, 105, 66, 107, 46, 53, 52, 65, 55, 300, 293, 334, 296, 336, 276, 283, 282, 295, 285];
+const LIDS = [159, 386];
+const IRIS = [468, 469, 470, 471, 472, 473, 474, 475, 476, 477];
+const PHRASE_END = /[.,!?;:،؛؟…]$/;
+
+const smoothstep = (e0, e1, x) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+const bump = (u) => (u <= 0 || u >= 1 ? 0 : Math.sin(Math.PI * u) ** 2);
+const rand = (a, b) => a + Math.random() * (b - a);
+
+/** Critically damped spring toward a moving target. */
+function spring(state, target, omega, dt) {
+  const x = state.x - target;
+  const exp = Math.exp(-omega * dt);
+  const v = state.v + omega * x;
+  state.x = target + (x + v * dt) * exp;
+  state.v = (state.v - omega * v * dt) * exp;
+}
 
 const FACE_VERT = /* glsl */ `
   varying vec2 vUv;
@@ -75,7 +97,15 @@ export class PortraitAvatar {
     this.onEnd = null;
     this.track = null;
     this.pose = { jaw: 0, wide: 0, round: 0 };
+    this.mouth = { jaw: { x: 0, v: 0 }, wide: { x: 0, v: 0 }, round: { x: 0, v: 0 } };
     this.blink = { next: performance.now() + 2000, start: 0, double: false };
+    this.motion = {
+      energy: 0, loud: 0, peak: 0.05,
+      yaw: { x: 0, v: 0 }, pitch: { x: 0, v: 0 }, roll: { x: 0, v: 0 }, brow: { x: 0, v: 0 },
+      target: { yaw: 0, pitch: 0, roll: 0, next: 0 },
+      gaze: { x: 0, y: 0, tx: 0, ty: 0, next: 0 },
+      gestures: [],
+    };
   }
 
   async load() {
@@ -94,6 +124,7 @@ export class PortraitAvatar {
     this.bases = Object.fromEntries(Object.entries(data.bases).map(([k, v]) => [k, Float32Array.from(v)]));
     this.head = Float32Array.from(data.head);
     this.work = new Float32Array(this.count * 2);
+    this.#buildMotionWeights(data);
 
     this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, premultipliedAlpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -152,6 +183,56 @@ export class PortraitAvatar {
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
+  /** Per-vertex weights for pseudo-3D head turns, eyebrow raises and gaze, derived from the landmarks. */
+  #buildMotionWeights(data) {
+    const v = this.rest, fw = data.face_width, n = this.count;
+    const nx = v[NOSE * 2], ny = v[NOSE * 2 + 1];
+    this.depth = new Float32Array(n);
+    this.brow = new Float32Array(n);
+    const browY = BROWS.reduce((a, i) => a + v[i * 2 + 1], 0) / BROWS.length;
+    const lidY = LIDS.reduce((a, i) => a + v[i * 2 + 1], 0) / LIDS.length;
+    const browX = [v[105 * 2], v[334 * 2]];
+    for (let i = 0; i < n; i++) {
+      const x = v[i * 2], y = v[i * 2 + 1];
+      const d = Math.hypot((x - nx) / (0.62 * fw), (y - ny) / (0.8 * fw));
+      this.depth[i] = (1 - smoothstep(0, 1, d)) * this.head[i];
+      const dx = Math.min(Math.abs(x - browX[0]), Math.abs(x - browX[1]));
+      const across = 1 - smoothstep(0.1 * fw, 0.24 * fw, dx);
+      const below = y > browY ? 1 - smoothstep(0, 1, (y - browY) / Math.max(lidY - browY, 1e-4)) : 1;
+      const above = y < browY ? 1 - smoothstep(0.02 * fw, 0.16 * fw, browY - y) : 1;
+      this.brow[i] = across * below * above * this.head[i];
+    }
+    this.browLift = 0.04 * fw;
+    this.turn = 0.034 * fw;
+  }
+
+  /** Plan nods, eyebrow raises and blinks from Azure word boundaries. */
+  #planGestures(words) {
+    const out = [];
+    let phraseStart = true;
+    words.forEach((w, i) => {
+      const text = String(w.text || "");
+      const long = (w.d || 0) > 320;
+      if (phraseStart) {
+        out.push({ t: w.t - 60, dur: rand(380, 520), kind: "nod", amp: rand(0.5, 0.9) });
+        if (Math.random() < 0.55) out.push({ t: w.t - 40, dur: rand(520, 760), kind: "brow", amp: rand(0.45, 0.8) });
+      } else if (long && Math.random() < 0.45) {
+        out.push({ t: w.t, dur: rand(300, 440), kind: "nod", amp: rand(0.3, 0.6) });
+      } else if (long && Math.random() < 0.2) {
+        out.push({ t: w.t, dur: rand(450, 650), kind: "brow", amp: rand(0.3, 0.55) });
+      }
+      phraseStart = PHRASE_END.test(text);
+      if (phraseStart) {
+        const end = w.t + (w.d || 200);
+        if (/[?؟]$/.test(text)) out.push({ t: end - 250, dur: 700, kind: "brow", amp: 0.8 });
+        if (Math.random() < 0.6) out.push({ t: end + 60, dur: 0, kind: "blink", amp: 1 });
+        out.push({ t: end, dur: 0, kind: "turn", amp: 1 });
+      }
+      if (i === words.length - 1) out.push({ t: (w.t || 0) + (w.d || 200) + 120, dur: rand(420, 560), kind: "nod", amp: 0.35 });
+    });
+    return out.sort((a, b) => a.t - b.t);
+  }
+
   resize() {
     const { clientWidth: w, clientHeight: h } = this.node;
     if (!w || !h) return;
@@ -192,6 +273,8 @@ export class PortraitAvatar {
       start, visemes, words: words.map((w) => w.t), analyser,
       samples: new Float32Array(analyser.fftSize), index: 0,
     };
+    this.motion.gestures = this.#planGestures(words);
+    this.motion.target.next = 0;
     const duration = buffer.duration * 1000 + 150;
     this.speakingUntil = performance.now() + duration;
     return new Promise((resolve) => {
@@ -240,10 +323,78 @@ export class PortraitAvatar {
     const next = visemes[tr.index + 1];
     const a = VISEME_POSE[cur.id] || VISEME_POSE[0];
     if (!next) return a;
+    if (cur.id === BILABIAL) return [0, 0.05, 0.05];
     const span = Math.max(next.t - cur.t, 1);
-    const k = Math.max(0, ((ms - cur.t) / span - 0.6) / 0.4);
     const b = VISEME_POSE[next.id] || VISEME_POSE[0];
-    return a.map((v, i) => v + (b[i] - v) * k * 0.6);
+    const k = smoothstep(0.35, 1, (ms - cur.t) / span) * (next.id === BILABIAL ? 0.9 : 0.55);
+    const pose = a.map((v, i) => v + (b[i] - v) * k);
+    if (span > 260 && cur.id !== 0) pose[0] *= 1 - 0.25 * smoothstep(0.5, 1, (ms - cur.t) / span);
+    return pose;
+  }
+
+  #loudness(dt) {
+    const tr = this.track, m = this.motion;
+    let level = 0;
+    if (tr) {
+      tr.analyser.getFloatTimeDomainData(tr.samples);
+      let sum = 0;
+      for (const s of tr.samples) sum += s * s;
+      level = Math.sqrt(sum / tr.samples.length);
+    }
+    m.peak = Math.max(0.03, m.peak * Math.exp(-dt * 0.4), level);
+    const norm = Math.min(1, level / m.peak);
+    m.loud += (norm - m.loud) * (1 - Math.exp(-dt * (norm > m.loud ? 30 : 9)));
+    return m.loud;
+  }
+
+  #updateMotion(now, dt) {
+    const m = this.motion, tr = this.track;
+    const talking = !!tr;
+    m.energy += ((talking ? 1 : 0) - m.energy) * (1 - Math.exp(-dt * (talking ? 3 : 1.2)));
+    const ms = tr ? (this.audioCtx.currentTime - tr.start) * 1000 : -1;
+
+    if (now > m.target.next) {
+      const e = m.energy;
+      m.target.yaw = rand(-1, 1) * (0.25 + 0.55 * e);
+      m.target.pitch = rand(-0.4, 0.4) * (0.3 + 0.4 * e);
+      m.target.roll = rand(-1, 1) * (0.004 + 0.008 * e);
+      m.target.next = now + (talking ? rand(1400, 2600) : rand(2500, 5000));
+    }
+
+    let nod = 0, brow = 0;
+    for (const g of m.gestures) {
+      if (ms < g.t) break;
+      if (g.kind === "blink" || g.kind === "turn") {
+        if (!g.done && ms >= g.t) {
+          g.done = true;
+          if (g.kind === "blink" && !this.blink.start) this.blink.next = now;
+          if (g.kind === "turn") m.target.next = 0;
+        }
+        continue;
+      }
+      const u = (ms - g.t) / g.dur;
+      if (g.kind === "nod") nod += g.amp * (bump(u) - 0.35 * bump(u * 1.6 - 0.6));
+      else brow += g.amp * bump(u);
+    }
+    if (!talking) m.gestures = [];
+
+    const loud = this.#loudness(dt);
+    spring(m.yaw, m.target.yaw, talking ? 3.2 : 1.8, dt);
+    spring(m.pitch, m.target.pitch + nod * 1.1 + loud * 0.18 * m.energy, talking ? 9 : 3, dt);
+    spring(m.roll, m.target.roll, 2, dt);
+    spring(m.brow, Math.min(1, brow + loud * 0.12 * m.energy), 11, dt);
+
+    const gz = m.gaze;
+    if (now > gz.next) {
+      const away = talking ? 0.35 : 1;
+      gz.tx = rand(-1, 1) * 0.0022 * away;
+      gz.ty = rand(-1, 1) * 0.0009 * away;
+      gz.next = now + (talking ? rand(900, 2200) : rand(700, 2600));
+      if (Math.abs(gz.tx) > 0.0016 && !this.blink.start && Math.random() < 0.3) this.blink.next = now;
+    }
+    const snap = 1 - Math.exp(-dt * 38);
+    gz.x += (gz.tx - gz.x) * snap;
+    gz.y += (gz.ty - gz.y) * snap;
   }
 
   #blinkAmount(now) {
@@ -267,19 +418,27 @@ export class PortraitAvatar {
     const t = now / 1000;
     const talking = !!this.track;
 
+    this.#updateMotion(now, dt);
+    const m = this.motion;
     const [jaw, wide, round] = this.#targetPose();
-    const rate = 1 - Math.exp(-dt * (talking ? 22 : 10));
-    this.pose.jaw += (jaw - this.pose.jaw) * rate;
-    this.pose.wide += (wide - this.pose.wide) * rate;
-    this.pose.round += (round - this.pose.round) * rate;
+    const gain = talking ? 0.85 + 0.35 * m.loud : 1;
+    const omega = talking ? 40 : 14;
+    spring(this.mouth.jaw, jaw * gain, jaw * gain < this.mouth.jaw.x ? omega * 1.2 : omega, dt);
+    spring(this.mouth.wide, wide, omega * 0.8, dt);
+    spring(this.mouth.round, round, omega * 0.8, dt);
+    this.pose.jaw = Math.max(0, this.mouth.jaw.x);
+    this.pose.wide = this.mouth.wide.x;
+    this.pose.round = Math.max(0, this.mouth.round.x);
     const blink = this.#blinkAmount(now);
 
-    const amp = talking ? 1.6 : 1;
-    const angle = (0.011 * Math.sin(t * 0.37) + 0.005 * Math.sin(t * 0.83 + 1)) * amp;
-    const tx = 0.0025 * Math.sin(t * 0.29) * amp;
-    let ty = 0.0018 * Math.sin(t * 0.51);
-    if (talking) ty += 0.002 * Math.sin(t * 5.3) * this.pose.jaw;
+    const amp = 1 + 0.4 * m.energy;
+    const angle = (0.009 * Math.sin(t * 0.37) + 0.004 * Math.sin(t * 0.83 + 1)) * amp + m.roll.x;
+    const tx = 0.002 * Math.sin(t * 0.29) * amp;
+    const ty = 0.0015 * Math.sin(t * 0.51);
     const breathe = 0.0012 * Math.sin(t * 1.1);
+    const yaw = m.yaw.x * this.turn, pitch = m.pitch.x * this.turn * 0.55;
+    const lift = m.brow.x * this.browLift;
+    const depth = this.depth, browW = this.brow;
     const cos = Math.cos(angle), sin = Math.sin(angle);
     const [px, py] = this.data.pivot;
     const { jaw: J, wide: W, round: R } = this.bases;
@@ -291,8 +450,11 @@ export class PortraitAvatar {
       const ix = i * 2, iy = ix + 1;
       let x = rest[ix] + J[ix] * this.pose.jaw + W[ix] * this.pose.wide + R[ix] * this.pose.round;
       let y = rest[iy] + J[iy] * this.pose.jaw + W[iy] * this.pose.wide + R[iy] * this.pose.round
-        + (BL[iy] + BR[iy]) * blink;
+        + (BL[iy] + BR[iy]) * blink - browW[i] * lift;
       const h = head[i];
+      const dp = depth[i];
+      x += yaw * (0.3 * h + 0.7 * dp);
+      y += pitch * (0.35 * h + 0.65 * dp);
       if (h > 0) {
         const dx = x - px, dy = y - py;
         const c = 1 + (cos - 1) * h, s = sin * h;
@@ -304,6 +466,10 @@ export class PortraitAvatar {
       w[iy] = y;
       pos[i * 3] = x - 0.5;
       pos[i * 3 + 1] = 0.5 - y;
+    }
+    for (const i of IRIS) {
+      pos[i * 3] += m.gaze.x;
+      pos[i * 3 + 1] -= m.gaze.y;
     }
     this.positions.needsUpdate = true;
 

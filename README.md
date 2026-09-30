@@ -16,7 +16,7 @@ mouse, touch, keyboard, voice and hand gestures.
 
 | Area | What it does |
 | --- | --- |
-| Holographic face | Photo-realistic talking portrait of Zayed inside a restrained cyan hologram frame. Azure Speech neural voices drive audio; Azure visemes drive jaw and lip movement, with natural blinking and head motion. |
+| Holographic face | Photo-realistic talking portrait of Zayed inside a restrained cyan hologram frame. Azure Speech neural voices drive audio; Azure visemes drive jaw and lip movement with coarticulation and loudness; Azure word timings drive nods, eyebrow raises, head turns and phrase-end blinks, with eye saccades at rest. |
 | Voice | Azure Speech recognition with automatic Arabic / English detection (browser speech recognition as a fallback). Replies are spoken with `ar-AE-HamdanNeural` or `en-US-AndrewMultilingualNeural`. |
 | Chat | Lightweight conversation panel, Enter to send, Shift+Enter for a new line, citation chips (`S1`, `U1`) and verified / not-verified badges. |
 | Trusted knowledge | Only documents listed in `knowledge/manifest.json` with complete approval metadata are indexed. Anything else is refused with a clear "not verified" answer. |
