@@ -16,7 +16,7 @@ mouse, touch, keyboard, voice and hand gestures.
 
 | Area | What it does |
 | --- | --- |
-| Holographic face | TalkingHead 3D avatar rendered as a restrained cyan hologram. Azure Speech neural voices drive audio and viseme-accurate lip-sync. |
+| Holographic face | Photo-realistic talking portrait of Zayed inside a restrained cyan hologram frame. Azure Speech neural voices drive audio; Azure visemes drive jaw and lip movement, with natural blinking and head motion. |
 | Voice | Azure Speech recognition with automatic Arabic / English detection (browser speech recognition as a fallback). Replies are spoken with `ar-AE-HamdanNeural` or `en-US-AndrewMultilingualNeural`. |
 | Chat | Lightweight conversation panel, Enter to send, Shift+Enter for a new line, citation chips (`S1`, `U1`) and verified / not-verified badges. |
 | Trusted knowledge | Only documents listed in `knowledge/manifest.json` with complete approval metadata are indexed. Anything else is refused with a clear "not verified" answer. |
@@ -108,7 +108,9 @@ zayed/speech.py         Azure Speech synthesis (visemes, word timings) and token
 knowledge/              manifest.json and approved source documents
 static/index.html       App shell
 static/css/zayed.css    Executive dark navy / cyan theme
-static/js/              app, avatar (TalkingHead), voice, workspace, gestures, i18n, api, icons
+static/js/              app, portrait (talking portrait), avatar (TalkingHead .glb), voice, workspace, gestures, i18n, api, icons
+static/avatar/          zayed.webp + zayed.json talking-portrait asset
+tools/build_portrait.py Offline builder for the portrait asset
 tests/                  pytest suite
 ```
 
@@ -119,8 +121,18 @@ ruff check . && ruff format --check zayed server.py tests
 pytest
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards. Keep TalkingHead / ARKit blend-shape naming intact when
-changing avatars.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards.
+
+### Changing the avatar
+
+`ZAYED_AVATAR_URL` selects the renderer: a `.json` path loads the talking portrait, a `.glb` path loads a
+TalkingHead 3D model (keep TalkingHead / ARKit blend-shape naming intact). To rebuild the portrait from a new
+front-facing head-and-shoulders photo:
+
+```bash
+pip install mediapipe==0.10.14 rembg==2.0.59 opencv-python-headless scipy
+python tools/build_portrait.py photo.png --crop X,Y,SIDE --out static/avatar/zayed
+```
 
 ## License
 

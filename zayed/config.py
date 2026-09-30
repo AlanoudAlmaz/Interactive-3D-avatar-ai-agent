@@ -38,8 +38,8 @@ class Settings:
     knowledge_dir: Path = field(default_factory=lambda: Path(_env("ZAYED_KNOWLEDGE_DIR", str(BASE_DIR / "knowledge"))))
     upload_dir: Path = field(default_factory=lambda: Path(_env("ZAYED_UPLOAD_DIR", str(BASE_DIR / "uploads"))))
     max_upload_mb: int = field(default_factory=lambda: int(_env("ZAYED_MAX_UPLOAD_MB", "25")))
-    avatar_url: str = field(default_factory=lambda: _env("ZAYED_AVATAR_URL", "/static/avatar_fixed.glb"))
-    avatar_body: str = field(default_factory=lambda: _env("ZAYED_AVATAR_BODY", "F"))
+    avatar_url: str = field(default_factory=lambda: _env("ZAYED_AVATAR_URL", "/static/avatar/zayed.json"))
+    avatar_body: str = field(default_factory=lambda: _env("ZAYED_AVATAR_BODY", "M"))
 
     @property
     def azure_speech_enabled(self) -> bool:

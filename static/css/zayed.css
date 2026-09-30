@@ -173,6 +173,11 @@ html[lang="en"] .lang-btn { font-family: "IBM Plex Sans Arabic", sans-serif; }
 .holo-avatar canvas {
   filter: saturate(0.72) contrast(1.06) brightness(1.02);
 }
+.holo-avatar.portrait {
+  mask-image: radial-gradient(ellipse 50% 54% at 50% 44%, #000 62%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 50% 54% at 50% 44%, #000 62%, transparent 100%);
+}
+.holo-avatar.portrait canvas { filter: saturate(0.9) contrast(1.03); }
 .holo-halo {
   position: absolute;
   inset: 8%;

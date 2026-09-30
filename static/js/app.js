@@ -1,5 +1,4 @@
 import { api } from "./api.js";
-import { Avatar } from "./avatar.js";
 import { HandGestures } from "./gestures.js";
 import { lang, onLangChange, setLang, t } from "./i18n.js";
 import { icon, kindIcon } from "./icons.js";
@@ -500,7 +499,10 @@ function bindEvents() {
 
 async function loadAvatar() {
   try {
-    app.avatar = new Avatar(els.avatar, app.config.avatar);
+    const portrait = app.config.avatar.url.endsWith(".json");
+    const { Avatar, PortraitAvatar } = portrait ? await import("./portrait.js") : await import("./avatar.js");
+    els.avatar.classList.toggle("portrait", portrait);
+    app.avatar = new (portrait ? PortraitAvatar : Avatar)(els.avatar, app.config.avatar);
     await app.avatar.load();
     app.avatarReady = true;
     els.holo.classList.add("ready");
